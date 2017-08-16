@@ -77,9 +77,9 @@ class wxMesh(weewx.drivers.AbstractDevice):
         self.host = stn_dict.get('host', 'localhost')
         # subscribe to all sub-topic of the topic define in weewx.conf 
         self.topic = stn_dict.get('topic', 'weather') + "/#"
-    self.username = stn_dict.get('username', 'default_usernameXXX')
+        self.username = stn_dict.get('username', 'default_usernameXXX')
         self.password = stn_dict.get('password', 'password')
-    self.clientid = stn_dict.get('client', 'weewx_mqttc')
+        self.clientid = stn_dict.get('client', 'weewx_mqttc')
         # how often to poll the weather data file, seconds
         self.poll_interval = float(stn_dict.get('poll_interval', 5.0))
         # mapping from variable names to weewx names
@@ -90,26 +90,26 @@ class wxMesh(weewx.drivers.AbstractDevice):
         loginf("polling interval is %s" % self.poll_interval)
         loginf('label map is %s' % self.label_map)
         self.payload = "Empty"
-    self.receive_buffer = {}
+        self.receive_buffer = {}
         #self.payloadList = [payload]
         self.client = mqtt.Client(client_id=self.clientid, protocol=mqtt.MQTTv31)
 
-    #self.client.on_connect = self.on_connect
-    self.client.on_message = self.on_message
+        #self.client.on_connect = self.on_connect
+        self.client.on_message = self.on_message
 
         self.client.username_pw_set(self.username, self.password)
-    self.client.connect(self.host, 1883, 60)
-    self.client.subscribe(self.topic, qos=0)
+        self.client.connect(self.host, 1883, 60)
+        self.client.subscribe(self.topic, qos=0)
 
     # The callback for when a PUBLISH message is received from the server.
     def on_message(self, client, userdata, msg):
-    self.payload = str(msg.payload)
-    string_topic = str(msg.topic)
-    key =  string_topic.split('/')[-1] 
+        self.payload = str(msg.payload)
+        string_topic = str(msg.topic)
+        key =  string_topic.split('/')[-1] 
         self.receive_buffer[key] = str(msg.payload)
 
     def closePort(self):
-    self.client.loop_stop()
+        self.client.loop_stop()
         self.client.disconnect()
 
     def genLoopPackets(self):
@@ -131,3 +131,4 @@ class wxMesh(weewx.drivers.AbstractDevice):
     @property
     def hardware_name(self):
         return "wxMesh"
+        
