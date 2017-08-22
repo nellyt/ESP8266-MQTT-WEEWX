@@ -42,8 +42,9 @@ import syslog
 import time
 import paho.mqtt.client as mqtt
 import weewx.drivers
+import socket
 
-DRIVER_VERSION = "0.1"
+DRIVER_VERSION = "0.1b"
 
 def logmsg(dst, msg):
     syslog.syslog(dst, 'wxMesh: %s' % msg)
@@ -132,3 +133,99 @@ class wxMesh(weewx.drivers.AbstractDevice):
     def hardware_name(self):
         return "wxMesh"
         
+class wxMeshService(weewx.engine.StdService):
+    """Collect data from MQTT broker as Service"""
+    
+    def __init__(self, engine, config_dict):
+        super(wxMeshService, self).__init__(engine, config_dict)
+        
+        d = config_dict.get('wxMesh', {})
+        self.host = d.get('host', 'localhost') # where to find the data file
+        self.topic = d.get('topic', 'weather') + "/#" # subscribe to all sub-topic of the topic define in weewx.conf 
+        self.username = d.get('username', 'default_usernameXXX')
+        self.password = d.get('password', 'password')
+        self.clientid = d.get('client', 'weewx_mqttc')
+        # Note polling interval not needed for service
+        self.label_map = d.get('label_map', {}) # mapping from variable names to weewx names
+        self.binding = d.get('binding', 'archive')
+        
+        loginf('service version is %s' % DRIVER_VERSION)
+        loginf('binding is %s' % self.binding)
+        loginf("host is %s" % self.host)
+        loginf("topic is %s" % self.topic)
+        loginf('label map is %s' % self.label_map)
+        self.payload = "Empty"
+        self.receive_buffer = {}
+        #self.payloadList = [payload]
+        self.client = mqtt.Client(client_id=self.clientid, protocol=mqtt.MQTTv31)
+
+        # assign callbacks
+        self.client.on_connect    = self.on_subscribe
+        #self.client.on_connect = self.on_connect
+        self.client.on_message = self.on_message
+
+        self.client.username_pw_set(self.username, self.password)
+        try: # TODO not convinced with this
+            rc = self.client.connect(self.host, 1883, 60)
+            if rc != 0 :
+                logerr("Failed to connect to %s : (%d) : %s" % (self.host, rc, mqtt.connack_string(rc)))
+            else :
+                loginf("Connected to %s : (%d) : %s" % (self.host, rc, mqtt.connack_string(rc)))
+        except (socket.error, socket.timeout, socket.herror), e:
+            logdbg("Failed to connect to: %s %s" % (self.host, e))
+        try: # TODO not convinced with this
+            self.client.subscribe(self.topic, qos=0)
+        except (socket.error, socket.timeout, socket.herror), e:
+            logdbg("Failed to subscribe to: %s %s" % (self.topic, e))
+            
+        if self.binding == 'loop':
+            self.bind(weewx.NEW_LOOP_PACKET, self.handle_new_loop)
+        else:
+            self.bind(weewx.NEW_ARCHIVE_RECORD, self.handle_new_archive)
+            
+        # The callback for when a PUBLISH message is received from the server.
+        
+    def on_subscribe(self, client, userdata, mid, granted_qos ):
+        logdbg("Subscribed %s" % str(client))
+        # TODO doesnt get called yet
+    
+    def on_message(self, client, userdata, msg):
+        self.payload = str(msg.payload)
+        string_topic = str(msg.topic)
+        logdbg("Got message %s %s" % (str(string_topic),str(msg.payload)))
+        key =  string_topic.split('/')[-1] 
+        self.receive_buffer[key] = str(msg.payload)
+
+    def closePort(self):
+        self.client.loop_stop()
+        self.client.disconnect()
+        
+    def handle_new_loop(self, event):
+        data = self.getData(event.packet)
+        event.packet.update(data)
+
+    def handle_new_archive(self, event):
+        delta = time.time() - event.record['dateTime']
+        if delta > event.record['interval'] * 60:
+            logdbg("Skipping record: time difference %s too big" % delta)
+            return
+        data = self.getData(event.record)
+        print data
+        event.record.update(data)
+        
+    def getData(self, packet):
+        self.client.loop_start()   # enable to receive ('on_message') in background
+
+        data = self.receive_buffer.copy()
+        self.receive_buffer.clear()
+        _packet = {'usUnits': weewx.METRIC}
+        if data:       # if data is not empty then prepare loop packet
+            #logdbg("dateTime %s" % _packet["dateTime"])
+            for vname in data:
+                _packet[self.label_map.get(vname, vname)] = _get_as_float(data, vname)
+                logdbg("packet content: %s =  %s" %(self.label_map.get(vname, vname), data[vname]))
+            data.clear() # TODO think this is redundant
+        print _packet
+        # TODO unit conversion : see OWFS and my Yocto driver
+        return _packet # We still return a packet if no data received
+#   self.client.loop_stop()
